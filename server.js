@@ -1,4 +1,5 @@
 const path = require("path");
+const fsp = require("fs/promises");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -21,13 +22,81 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, "public")));
 
+// =========================
+// Persistence (log/state)
+// =========================
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const STATE_FILE = path.join(DATA_DIR, "state.json");
+
+let writeQueue = Promise.resolve();
+let saveTimer = null;
+
+async function ensureDataDir() {
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+}
+
+async function safeWriteJson(filePath, obj) {
+  const tmp = filePath + ".tmp";
+  const payload = JSON.stringify(obj, null, 2);
+  await fsp.writeFile(tmp, payload, "utf-8");
+  await fsp.rename(tmp, filePath);
+}
+
+function scheduleSaveState() {
+  // debounce so likes don't hammer disk
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    writeQueue = writeQueue
+      .then(async () => {
+        await ensureDataDir();
+        await safeWriteJson(STATE_FILE, { version: 1, savedAt: Date.now(), recent });
+      })
+      .catch(() => {});
+  }, 250);
+}
+
+async function loadStateFromDisk() {
+  try {
+    await ensureDataDir();
+    const raw = await fsp.readFile(STATE_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed.recent)) return;
+
+    recent.length = 0;
+    for (const x of parsed.recent) {
+      if (!x || typeof x !== "object") continue;
+      if (!x.id || !x.text) continue;
+
+      const text = String(x.text);
+      recent.push({
+        id: String(x.id),
+        text,
+        likes: Number.isFinite(x.likes) ? x.likes : 0,
+        nx: Number.isFinite(x.nx) ? x.nx : Math.random() * 0.75 + 0.125,
+        ny: Number.isFinite(x.ny) ? x.ny : Math.random() * 0.35 + 0.15,
+        nvx: Number.isFinite(x.nvx) ? x.nvx : (Math.random() * 2 - 1) * 2.4,
+        nvy: Number.isFinite(x.nvy) ? x.nvy : (Math.random() * 2 - 1) * 2.4,
+        radius: Number.isFinite(x.radius) ? x.radius : computeRadius(text),
+        ts: Number.isFinite(x.ts) ? x.ts : Date.now(),
+      });
+    }
+
+    enforceMaxBubbles();
+  } catch {
+    // ok if missing
+  }
+}
+
+// =========================
+// Helpers
+// =========================
 function clampText(s, maxLen = 80) {
   const t = String(s ?? "").trim();
   if (!t) return "";
   return t.length > maxLen ? t.slice(0, maxLen - 1) + "…" : t;
 }
 
-// Bubble radius baseline (2x)
 function computeRadius(text) {
   const len = [...String(text)].length;
   const baseR = 68;
@@ -36,16 +105,25 @@ function computeRadius(text) {
 }
 
 const MAX_BALLS = 20;
+const RECENT_MAX = 200;
 
-// Active bubbles list (also used to seed late joiners)
 const recent = [];
-const RECENT_MAX = 120;
-
 let hostSocketId = null;
 
 function cryptoRandomId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
+}
+
+function enforceMaxBubbles() {
+  if (recent.length <= MAX_BALLS) return [];
+  recent.sort((a, b) => {
+    const dl = (b.likes ?? 0) - (a.likes ?? 0);
+    if (dl !== 0) return dl;
+    return (b.ts ?? 0) - (a.ts ?? 0);
+  });
+  const removed = recent.splice(MAX_BALLS);
+  return removed.map((x) => x.id);
 }
 
 function pickEvictionCandidate() {
@@ -64,6 +142,9 @@ function removeById(id) {
   if (idx >= 0) recent.splice(idx, 1);
 }
 
+// =========================
+// Socket
+// =========================
 io.on("connection", (socket) => {
   if (!hostSocketId) hostSocketId = socket.id;
 
@@ -99,9 +180,9 @@ io.on("connection", (socket) => {
     if (recent.length > RECENT_MAX) recent.shift();
 
     io.emit("spawn", spawn);
+    scheduleSaveState();
   });
 
-  // Like: any user can like
   socket.on("like", (payload) => {
     const id = String(payload?.id || "");
     if (!id) return;
@@ -112,22 +193,17 @@ io.on("connection", (socket) => {
     recent[idx].likes = nextLikes;
 
     io.emit("likeUpdate", { id, likes: nextLikes });
-  });
-
-  // Host-only controls
-  socket.on("hostClearLog", () => {
-    if (socket.id !== hostSocketId) return;
-    const ids = recent.map(x => x.id);
-    recent.length = 0;
-    io.emit("logCleared", { ids });
+    scheduleSaveState();
   });
 
   socket.on("hostDeleteItem", (payload) => {
     if (socket.id !== hostSocketId) return;
     const id = String(payload?.id || "");
     if (!id) return;
+
     removeById(id);
     io.emit("delete", { id });
+    scheduleSaveState();
   });
 
   socket.on("hostEditItem", (payload) => {
@@ -145,6 +221,7 @@ io.on("connection", (socket) => {
     }
 
     io.emit("edit", { id, text, radius, ts: Date.now() });
+    scheduleSaveState();
   });
 
   socket.on("disconnect", () => {
@@ -156,5 +233,12 @@ io.on("connection", (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Listening on ${PORT}`));
+// =========================
+// Boot
+// =========================
+(async () => {
+  await loadStateFromDisk();
+
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => console.log(`Listening on ${PORT}`));
+})();
