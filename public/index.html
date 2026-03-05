@@ -1,171 +1,773 @@
-
 <!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>멀티유저 비눗방울</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>건의사항 비눗방울</title>
+  <style>
+    html, body { margin:0; height:100%; background:#0b1020; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    canvas { display:block; }
 
-<style>
-html,body{
-margin:0;
-height:100%;
-background:#0b1020;
-overflow:hidden;
-font-family:system-ui;
-}
+    #centerMsg {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 14px 18px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: rgba(255,255,255,0.92);
+      font-weight: 900;
+      font-size: 16px;
+      letter-spacing: -0.2px;
+      user-select: none;
+      pointer-events: none;
+      backdrop-filter: blur(10px);
+      text-align: center;
+      max-width: calc(100vw - 360px);
+      line-height: 1.2;
+    }
 
-#ui{
-position:fixed;
-left:16px;
-right:340px;
-bottom:16px;
-display:flex;
-gap:10px;
-}
+    #ui {
+      position: fixed; left: 16px; right: 340px; bottom: 16px;
+      display: flex; gap: 10px; align-items: center;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 12px;
+    }
+    #text {
+      flex: 1;
+      height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.10);
+      color: white;
+      padding: 0 14px;
+      outline: none;
+      font-size: 15px;
+    }
+    #btn {
+      height: 44px;
+      padding: 0 16px;
+      border-radius: 12px;
+      border: 0;
+      background: #4f8cff;
+      color: white;
+      font-weight: 900;
+      cursor: pointer;
+    }
 
-#text{
-flex:1;
-height:44px;
-border-radius:12px;
-border:1px solid rgba(255,255,255,0.2);
-background:rgba(255,255,255,0.1);
-color:white;
-padding:0 14px;
-}
+    /* Sidebar (right) */
+    #sidebar {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      bottom: 12px;
+      width: 300px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(10px);
+      color: rgba(255,255,255,0.9);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #sidebarHeader {
+      padding: 14px 14px 10px;
+      font-weight: 900;
+      font-size: 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.10);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    #countBadge {
+      font-weight: 900;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.12);
+      white-space: nowrap;
+    }
 
-#btn{
-height:44px;
-padding:0 16px;
-border-radius:12px;
-border:0;
-background:#4f8cff;
-color:white;
-font-weight:700;
-}
+    #hostControls {
+      padding: 10px 10px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.10);
+      display: none;
+      gap: 8px;
+      align-items: center;
+    }
+    .miniBtn {
+      height: 32px;
+      padding: 0 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.92);
+      font-weight: 900;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .miniBtn.danger {
+      background: rgba(255, 80, 80, 0.14);
+      border-color: rgba(255, 80, 80, 0.22);
+    }
 
-#sidebar{
-position:fixed;
-top:12px;
-right:12px;
-bottom:12px;
-width:300px;
-border-radius:18px;
-background:rgba(255,255,255,0.07);
-border:1px solid rgba(255,255,255,0.12);
-color:white;
-display:flex;
-flex-direction:column;
-}
+    #log {
+      padding: 8px 10px 10px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .logItem {
+      font-size: 12px;
+      line-height: 1.35;
+      padding: 10px 10px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.10);
+      word-break: break-word;
+      white-space: pre-wrap;
+      position: relative;
+    }
+    .logMeta {
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+      margin-top: 6px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.55);
+      font-weight: 700;
+    }
+    .logActions {
+      display: none;
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      gap: 6px;
+    }
+    .iconBtn {
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.92);
+      cursor: pointer;
+      font-weight: 900;
+      line-height: 26px;
+      text-align: center;
+      user-select: none;
+    }
+    .iconBtn.danger {
+      background: rgba(255, 80, 80, 0.14);
+      border-color: rgba(255, 80, 80, 0.22);
+    }
 
-#sidebarHeader{
-padding:14px;
-font-weight:800;
-border-bottom:1px solid rgba(255,255,255,0.1);
-}
-
-#log{
-padding:10px;
-overflow:auto;
-display:flex;
-flex-direction:column;
-gap:8px;
-}
-
-.logItem{
-font-size:12px;
-padding:10px;
-border-radius:12px;
-background:rgba(0,0,0,0.2);
-}
-</style>
+    @media (max-width: 820px) {
+      #sidebar { display: none; }
+      #ui { right: 16px; }
+      #centerMsg { max-width: calc(100vw - 32px); }
+    }
+  </style>
 </head>
-
 <body>
+  <div id="centerMsg">방울을 클릭하면 좋아요가 추가됩니다!</div>
 
-<div id="sidebar">
-<div id="sidebarHeader">건의사항 리스트</div>
-<div id="log"></div>
-</div>
+  <div id="sidebar">
+    <div id="sidebarHeader">
+      <span>건의사항 리스트</span>
+      <span id="countBadge">0</span>
+    </div>
+    <div id="hostControls">
+      <button id="clearLogBtn" class="miniBtn danger">리스트 전체 삭제</button>
+      <span style="font-size:12px; color: rgba(255,255,255,0.6); font-weight:800;">HOST 전용</span>
+    </div>
+    <div id="log"></div>
+  </div>
 
-<div id="ui">
-<input id="text" type="text" maxlength="80" placeholder="입력창에 건의사항을 적어주세요 (80자 이내)">
-<button id="btn">보내기</button>
-</div>
+  <div id="ui">
+    <input id="text" type="text" placeholder="입력창에 건의사항을 적어주세요 (80자 이내)" maxlength="80" />
+    <button id="btn">보내기</button>
+  </div>
 
-<script src="/socket.io/socket.io.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
 
-<script>
+  <script>
+    const socket = io();
 
-const socket=io();
+    const {
+      Engine, Render, Runner,
+      Bodies, Composite, Body,
+      Events, Mouse, MouseConstraint, Query
+    } = Matter;
 
-const {Engine,Render,Runner,Bodies,Composite,Body}=Matter;
+    // ===== Physics =====
+    const engine = Engine.create();
+    engine.gravity.y = 0;
 
-const engine=Engine.create();
-engine.gravity.y=0;
+    const render = Render.create({
+      element: document.body,
+      engine,
+      options: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        wireframes: false,
+        background: "#0b1020",
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 2)
+      }
+    });
 
-const render=Render.create({
-element:document.body,
-engine,
-options:{
-width:window.innerWidth,
-height:window.innerHeight,
-wireframes:false,
-background:"#0b1020"
-}
-});
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
 
-Render.run(render);
-Runner.run(Runner.create(),engine);
+    // ===== Walls =====
+    let walls = [];
+    function rebuildWalls() {
+      walls.forEach(w => Composite.remove(engine.world, w));
+      walls = [];
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const t = 80;
 
-const balls=new Map();
+      const common = { isStatic: true, render: { fillStyle: "rgba(255,255,255,0)" } };
+      walls.push(
+        Bodies.rectangle(w/2, h + t/2, w + 2*t, t, common),
+        Bodies.rectangle(w/2, -t/2,    w + 2*t, t, common),
+        Bodies.rectangle(-t/2, h/2,    t, h + 2*t, common),
+        Bodies.rectangle(w + t/2, h/2, t, h + 2*t, common),
+      );
+      Composite.add(engine.world, walls);
+    }
+    rebuildWalls();
 
-function spawnBall(spawn){
+    // ===== Mouse drag (optional) =====
+    const mouse = Mouse.create(render.canvas);
+    const mouseConstraint = MouseConstraint.create(engine, {
+      mouse,
+      constraint: { stiffness: 0.2, render: { visible: false } }
+    });
+    Composite.add(engine.world, mouseConstraint);
+    render.mouse = mouse;
 
-const x=spawn.nx*window.innerWidth;
-const y=spawn.ny*window.innerHeight;
-const r=spawn.radius||80;
+    // ===== Host state =====
+    let isHost = false;
+    let hostSocketId = null;
 
-const ball=Bodies.circle(x,y,r,{restitution:0.95});
+    const hostControlsEl = document.getElementById("hostControls");
+    const clearLogBtn = document.getElementById("clearLogBtn");
 
-Composite.add(engine.world,ball);
-balls.set(spawn.id,ball);
+    // ===== Sidebar log =====
+    const logEl = document.getElementById("log");
+    const countBadge = document.getElementById("countBadge");
 
-Body.setVelocity(ball,{x:spawn.nvx,y:spawn.nvy});
-}
+    // store items; render sorted by likes desc
+    const itemsById = new Map(); // id -> {id,text,ts,likes}
+    const domById = new Map();
 
-socket.on("spawn",spawn=>{
+    function fmtTime(ts) {
+      const d = new Date(ts);
+      const hh = String(d.getHours()).padStart(2,"0");
+      const mm = String(d.getMinutes()).padStart(2,"0");
+      const ss = String(d.getSeconds()).padStart(2,"0");
+      return `${hh}:${mm}:${ss}`;
+    }
 
-spawnBall(spawn);
+    function renderListSorted() {
+      const arr = Array.from(itemsById.values());
+      arr.sort((a,b) => {
+        const dl = (b.likes??0) - (a.likes??0);
+        if (dl !== 0) return dl;
+        return (b.ts??0) - (a.ts??0);
+      });
 
-const item=document.createElement("div");
-item.className="logItem";
-item.textContent=spawn.text;
-document.getElementById("log").appendChild(item);
+      // update badge
+      const n = arr.length;
+      countBadge.textContent = isHost ? `${n} · HOST` : String(n);
 
-});
+      // rebuild list (simple, safe for <= 120)
+      logEl.innerHTML = "";
+      domById.clear();
+      for (const item of arr) {
+        const el = document.createElement("div");
+        el.className = "logItem";
+        el.dataset.id = item.id;
 
-socket.on("recent",arr=>{
+        const textNode = document.createElement("div");
+        textNode.className = "logText";
+        textNode.textContent = item.text;
 
-arr.forEach(spawn=>{
-spawnBall(spawn);
-});
+        const meta = document.createElement("span");
+        meta.className = "logMeta";
 
-});
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "logTime";
+        timeSpan.textContent = fmtTime(item.ts);
 
-document.getElementById("btn").onclick=()=>{
+        const likeSpan = document.createElement("span");
+        likeSpan.className = "logLikes";
+        likeSpan.textContent = `♥ ${item.likes ?? 0}`;
 
-const input=document.getElementById("text");
-const text=input.value.trim();
-if(!text)return;
+        meta.appendChild(timeSpan);
+        meta.appendChild(likeSpan);
 
-socket.emit("submitText",{text});
-input.value="";
+        const actions = document.createElement("div");
+        actions.className = "logActions";
+        actions.style.display = isHost ? "flex" : "none";
 
-};
+        const editBtn = document.createElement("div");
+        editBtn.className = "iconBtn";
+        editBtn.title = "수정";
+        editBtn.textContent = "✎";
 
-</script>
+        const delBtn = document.createElement("div");
+        delBtn.className = "iconBtn danger";
+        delBtn.title = "삭제";
+        delBtn.textContent = "×";
 
+        editBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!isHost) return;
+          const next = prompt("수정할 텍스트를 입력하세요", item.text);
+          if (next === null) return;
+          const t = String(next).trim();
+          if (!t) return;
+          socket.emit("hostEditItem", { id: item.id, text: t });
+        });
+
+        delBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!isHost) return;
+          socket.emit("hostDeleteItem", { id: item.id });
+        });
+
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+
+        el.appendChild(actions);
+        el.appendChild(textNode);
+        el.appendChild(meta);
+
+        logEl.appendChild(el);
+        domById.set(item.id, el);
+      }
+    }
+
+    function updateHostUI() {
+      hostControlsEl.style.display = isHost ? "flex" : "none";
+      // actions visibility handled by renderListSorted
+      renderListSorted();
+    }
+
+    clearLogBtn.addEventListener("click", () => {
+      if (!isHost) return;
+      socket.emit("hostClearLog");
+    });
+
+    // ===== Balls =====
+    const balls = new Map(); // id -> body
+    const particles = new Set();
+
+    const MAX_BALLS = 20;
+    const FADE_MS = 900;
+
+    function randomBallColor() {
+      const hues = [200, 220, 240, 260, 280, 300, 160, 180];
+      const h = hues[Math.floor(Math.random() * hues.length)];
+      return `hsl(${h} 85% 62% / 0.92)`;
+    }
+
+    function parseHSLAAlpha(fillStyle, alpha) {
+      const m = String(fillStyle).match(/hsl\((.+?)\s+(.+?)\s+(.+?)\s*\/\s*([0-9.]+)\s*\)/i);
+      if (!m) return `rgba(255,255,255,${alpha})`;
+      return `hsl(${m[1]} ${m[2]} ${m[3]} / ${alpha})`;
+    }
+
+    function popEffect(pos, r) {
+      const pieces = 12;
+      for (let i = 0; i < pieces; i++) {
+        const pr = Math.max(4, Math.floor(r * 0.12));
+        const p = Bodies.circle(pos.x, pos.y, pr, {
+          restitution: 0.96,
+          friction: 0.01,
+          frictionAir: 0.03,
+          density: 0.0010,
+          render: {
+            fillStyle: "rgba(255,255,255,0.85)",
+            strokeStyle: "rgba(255,255,255,0.35)",
+            lineWidth: 1
+          }
+        });
+
+        const angle = (Math.PI * 2) * (i / pieces) + (Math.random() * 0.4);
+        const speed = 3 + Math.random() * 4;
+        Body.setVelocity(p, { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed });
+        Body.setAngularVelocity(p, (Math.random() * 2 - 1) * 0.18);
+
+        p._dieAt = Date.now() + 650;
+        particles.add(p);
+        Composite.add(engine.world, p);
+      }
+    }
+
+    function startFadeOut(ball, doPop=false) {
+      if (!ball) return;
+      if (doPop && !ball._popped) {
+        ball._popped = true;
+        popEffect({ x: ball.position.x, y: ball.position.y }, ball.circleRadius || 80);
+      }
+      if (ball._fading) return;
+      ball._fading = true;
+      ball._fadeStart = Date.now();
+      ball._fadeDur = FADE_MS;
+      ball.restitution = 0.4;
+      ball.frictionAir = 0.08;
+    }
+
+    function maybeEvictOneBall() {
+      if (balls.size < MAX_BALLS) return;
+      // Client-side safety: evict lowest-like if server didn't already
+      let victim = null;
+      for (const b of balls.values()) {
+        if (b._fading) continue;
+        if (!victim) victim = b;
+        else {
+          const bl = b._likes ?? 0;
+          const vl = victim._likes ?? 0;
+          if (bl < vl) victim = b;
+        }
+      }
+      if (victim) startFadeOut(victim, true);
+    }
+
+    function spawnBall(spawn) {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      if (balls.has(spawn.id)) return;
+
+      maybeEvictOneBall();
+
+      const x = spawn.nx * w;
+      const y = spawn.ny * h;
+      const r = Math.max(56, Math.min(240, spawn.radius ?? 120));
+
+      const baseFill = randomBallColor();
+      const ball = Bodies.circle(x, y, r, {
+        restitution: 0.95,
+        friction: 0.01,
+        frictionAir: 0.02,
+        density: 0.0012,
+        render: {
+          fillStyle: baseFill,
+          strokeStyle: "rgba(255,255,255,0.30)",
+          lineWidth: 2
+        }
+      });
+
+      ball._spawnId = spawn.id;
+      ball._labelText = spawn.text;
+      ball._likes = spawn.likes ?? 0;
+      ball._baseFill = baseFill;
+
+      Composite.add(engine.world, ball);
+      balls.set(spawn.id, ball);
+
+      Body.setVelocity(ball, { x: spawn.nvx ?? 0, y: spawn.nvy ?? 0 });
+      Body.setAngularVelocity(ball, (Math.random() * 2 - 1) * 0.02);
+    }
+
+    function removeBall(id, pop=true) {
+      const b = balls.get(id);
+      if (!b) return;
+      startFadeOut(b, pop);
+    }
+
+    function editBall(id, text, radius) {
+      const b = balls.get(id);
+      if (!b) return;
+      b._labelText = text;
+
+      if (radius) {
+        const targetR = Math.max(56, Math.min(240, radius));
+        const curR = b.circleRadius || targetR;
+        if (Math.abs(targetR - curR) >= 1) {
+          const scale = targetR / curR;
+          Body.scale(b, scale, scale);
+        }
+      }
+    }
+
+    function setLikes(id, likes) {
+      const b = balls.get(id);
+      if (b) b._likes = likes;
+    }
+
+    // ===== Click to Like =====
+    render.canvas.addEventListener("mouseup", (e) => {
+      const rect = render.canvas.getBoundingClientRect();
+      const px = (e.clientX - rect.left);
+      const py = (e.clientY - rect.top);
+
+      const bodies = Array.from(balls.values());
+      const found = Query.point(bodies, { x: px, y: py });
+      if (found && found.length) {
+        const b = found[0];
+        if (b?._spawnId) socket.emit("like", { id: b._spawnId });
+      }
+    });
+
+    // ===== Text fit =====
+    function wrapTextGreedy(text, maxWidthPx, ctx) {
+      const hasSpace = /\s/.test(text);
+      if (!hasSpace) {
+        const mid = Math.ceil(text.length / 2);
+        return [text.slice(0, mid), text.slice(mid)].filter(Boolean);
+      }
+      const words = text.split(/\s+/).filter(Boolean);
+      const lines = [];
+      let line = "";
+      for (const w of words) {
+        const test = line ? (line + " " + w) : w;
+        if (ctx.measureText(test).width <= maxWidthPx) {
+          line = test;
+        } else {
+          if (line) lines.push(line);
+          line = w;
+          if (ctx.measureText(line).width > maxWidthPx) {
+            let chunk = "";
+            for (const ch of line) {
+              const t = chunk + ch;
+              if (ctx.measureText(t).width <= maxWidthPx) chunk = t;
+              else {
+                if (chunk) lines.push(chunk);
+                chunk = ch;
+              }
+            }
+            line = chunk;
+          }
+        }
+        if (lines.length >= 3) break;
+      }
+      if (lines.length < 3 && line) lines.push(line);
+      return lines.slice(0, 3);
+    }
+
+    function fitTextInCircle(text, r, ctx) {
+      const padding = r * 0.22;
+      const maxWidth = (2 * r) - (2 * padding);
+      const maxHeight = (2 * r) - (2 * padding);
+
+      let fontSize = Math.min(34, Math.max(12, Math.floor(r * 0.28)));
+      const minFont = 12;
+
+      for (; fontSize >= minFont; fontSize--) {
+        ctx.font = `900 ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+        const lines = wrapTextGreedy(text, maxWidth, ctx);
+
+        const widthOk = lines.every(line => ctx.measureText(line).width <= maxWidth);
+        const lineHeight = fontSize * 1.10;
+        const totalHeight = lines.length * lineHeight;
+
+        if (widthOk && totalHeight <= maxHeight) return { fontSize, lines, lineHeight };
+      }
+
+      ctx.font = `900 ${minFont}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+      const lines = wrapTextGreedy(text, maxWidth, ctx);
+      return { fontSize: minFont, lines, lineHeight: minFont * 1.10 };
+    }
+
+    // ===== Engine update =====
+    Events.on(engine, "beforeUpdate", () => {
+      const now = Date.now();
+
+      // fade-out + remove
+      for (const body of balls.values()) {
+        if (!body._fading) continue;
+        const t = Math.min(1, (now - body._fadeStart) / body._fadeDur);
+        const alpha = Math.max(0, 1 - t);
+
+        body.render.fillStyle = parseHSLAAlpha(body._baseFill, alpha * 0.92);
+        body.render.strokeStyle = `rgba(255,255,255,${0.30 * alpha})`;
+
+        if (t >= 1) {
+          Composite.remove(engine.world, body);
+          if (body._spawnId && balls.has(body._spawnId)) balls.delete(body._spawnId);
+        }
+      }
+
+      // particles cleanup
+      for (const p of particles) {
+        if (p._dieAt && now >= p._dieAt) {
+          Composite.remove(engine.world, p);
+          particles.delete(p);
+        }
+      }
+
+      // Bubble drift: roam everywhere
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const margin = 140;
+      const repulse = 0.0000022;
+      const jitter = 0.00002;
+
+      for (const b of balls.values()) {
+        const fx = (Math.random() * 2 - 1) * jitter;
+        const fy = (Math.random() * 2 - 1) * jitter;
+
+        let rx = 0, ry = 0;
+        if (b.position.x < margin) rx += repulse;
+        if (b.position.x > w - margin) rx -= repulse;
+        if (b.position.y < margin) ry += repulse;
+        if (b.position.y > h - margin) ry -= repulse;
+
+        Body.applyForce(b, b.position, { x: fx + rx, y: fy + ry });
+
+        const v = b.velocity;
+        const vmax = 4.0;
+        const sp = Math.hypot(v.x, v.y);
+        if (sp > vmax) {
+          Body.setVelocity(b, { x: (v.x / sp) * vmax, y: (v.y / sp) * vmax });
+        }
+      }
+    });
+
+    // ===== Text + Likes render =====
+    Events.on(render, "afterRender", () => {
+      const ctx = render.context;
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (const body of balls.values()) {
+        const p = body.position;
+        const r = body.circleRadius || 120;
+        const text = body._labelText || "";
+
+        const fitted = fitTextInCircle(text, r, ctx);
+        const fontSize = fitted.fontSize;
+        const lines = fitted.lines;
+        const lh = fitted.lineHeight;
+
+        ctx.font = `900 ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+        ctx.fillStyle = "rgba(10, 14, 28, 0.92)";
+
+        if (lines.length === 1) {
+          ctx.fillText(lines[0], p.x, p.y);
+        } else {
+          const startY = p.y - (lh * (lines.length - 1)) / 2;
+          for (let i = 0; i < lines.length; i++) {
+            ctx.fillText(lines[i], p.x, startY + i * lh);
+          }
+        }
+
+        const likes = body._likes ?? 0;
+        const likeFont = Math.max(12, Math.floor(fontSize * 0.85));
+        ctx.font = `900 ${likeFont}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+        ctx.fillStyle = "rgba(10, 14, 28, 0.78)";
+        ctx.fillText(`♥ ${likes}`, p.x, p.y + r * 0.42);
+      }
+
+      ctx.restore();
+    });
+
+    // ===== Socket events =====
+    socket.on("host", (payload) => {
+      isHost = !!payload?.isHost;
+      hostSocketId = payload?.hostSocketId || null;
+      updateHostUI();
+    });
+
+    socket.on("hostReassigned", (payload) => {
+      hostSocketId = payload?.hostSocketId || null;
+      isHost = (socket.id && hostSocketId && socket.id === hostSocketId) ? true : false;
+      updateHostUI();
+    });
+
+    socket.on("spawn", (spawn) => {
+      spawnBall(spawn);
+      itemsById.set(spawn.id, { id: spawn.id, text: spawn.text, ts: spawn.ts || Date.now(), likes: spawn.likes ?? 0 });
+      renderListSorted();
+    });
+
+    socket.on("recent", (arr) => {
+      (arr || []).forEach(spawn => {
+        spawnBall(spawn);
+        itemsById.set(spawn.id, { id: spawn.id, text: spawn.text, ts: spawn.ts || Date.now(), likes: spawn.likes ?? 0 });
+      });
+      renderListSorted();
+    });
+
+    socket.on("likeUpdate", ({ id, likes }) => {
+      if (!id || typeof likes !== "number") return;
+      setLikes(id, likes);
+      const it = itemsById.get(id);
+      if (it) it.likes = likes;
+      renderListSorted();
+    });
+
+    socket.on("evict", ({ id }) => {
+      if (!id) return;
+      removeBall(id, true);
+      itemsById.delete(id);
+      renderListSorted();
+    });
+
+    socket.on("delete", ({ id }) => {
+      if (!id) return;
+      removeBall(id, true);
+      itemsById.delete(id);
+      renderListSorted();
+    });
+
+    socket.on("edit", ({ id, text, radius, ts }) => {
+      if (!id || !text) return;
+      editBall(id, text, radius);
+      const it = itemsById.get(id);
+      if (it) {
+        it.text = text;
+        it.ts = ts || Date.now();
+      }
+      renderListSorted();
+    });
+
+    socket.on("logCleared", ({ ids }) => {
+      (ids || []).forEach(id => removeBall(id, true));
+      itemsById.clear();
+      renderListSorted();
+    });
+
+    // ===== Input =====
+    const input = document.getElementById("text");
+    const btn = document.getElementById("btn");
+
+    function submit() {
+      const text = (input.value || "").trim();
+      if (!text) return;
+      socket.emit("submitText", { text });
+      input.value = "";
+      input.focus();
+    }
+    btn.addEventListener("click", submit);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+
+    window.addEventListener("resize", () => {
+      render.canvas.width = window.innerWidth;
+      render.canvas.height = window.innerHeight;
+      render.options.width = window.innerWidth;
+      render.options.height = window.innerHeight;
+      rebuildWalls();
+    });
+  </script>
 </body>
 </html>
