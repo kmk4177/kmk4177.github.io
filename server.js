@@ -1,5 +1,4 @@
 const path = require("path");
-const fsp = require("fs/promises");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -23,43 +22,88 @@ const io = new Server(server, {
 app.use(express.static(path.join(__dirname, "public")));
 
 // =========================
-// Persistence (log/state)
+// Persistence (redis state)
 // =========================
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
-const STATE_FILE = path.join(DATA_DIR, "state.json");
+// Render free instances can sleep/restart, and local disk is ephemeral.
+// Store state in Redis so it survives restarts.
+//
+// Required env vars on Render:
+//   REDIS_HOST=redis-....cloud.redislabs.com
+//   REDIS_PORT=12615
+//   REDIS_PASSWORD=...
+// Optional:
+//   REDIS_KEY=realtime-balls:state:v1
+//
+const REDIS_HOST = process.env.REDIS_HOST;
+const REDIS_PORT = Number(process.env.REDIS_PORT || "0");
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
+const REDIS_KEY = process.env.REDIS_KEY || "realtime-balls:state:v1";
+
+let redis = null;
+let redisReady = false;
 
 let writeQueue = Promise.resolve();
 let saveTimer = null;
 
-async function ensureDataDir() {
-  await fsp.mkdir(DATA_DIR, { recursive: true });
+async function initRedis() {
+  if (!REDIS_HOST || !REDIS_PORT || !REDIS_PASSWORD) {
+    console.warn("[REDIS] Not configured. State will NOT persist across restarts.");
+    return;
+  }
+
+  const { createClient } = require("redis");
+  redis = createClient({
+    socket: {
+      host: REDIS_HOST,
+      port: REDIS_PORT,
+      tls: true,
+    },
+    password: REDIS_PASSWORD,
+  });
+
+  redis.on("error", (err) => {
+    console.error("[REDIS] error:", err?.message || err);
+    redisReady = false;
+  });
+  redis.on("ready", () => {
+    redisReady = true;
+    console.log("[REDIS] ready");
+  });
+  redis.on("end", () => {
+    redisReady = false;
+    console.log("[REDIS] connection ended");
+  });
+
+  await redis.connect();
 }
 
-async function safeWriteJson(filePath, obj) {
-  const tmp = filePath + ".tmp";
-  const payload = JSON.stringify(obj, null, 2);
-  await fsp.writeFile(tmp, payload, "utf-8");
-  await fsp.rename(tmp, filePath);
+async function saveStateToRedis() {
+  if (!redis || !redisReady) return;
+  const payload = JSON.stringify({ version: 1, savedAt: Date.now(), recent });
+  await redis.set(REDIS_KEY, payload);
 }
 
 function scheduleSaveState() {
-  // debounce so likes don't hammer disk
+  // debounce so likes don't hammer Redis
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
     writeQueue = writeQueue
       .then(async () => {
-        await ensureDataDir();
-        await safeWriteJson(STATE_FILE, { version: 1, savedAt: Date.now(), recent });
+        await saveStateToRedis();
       })
-      .catch(() => {});
+      .catch((e) => {
+        console.error("[REDIS] save failed:", e?.message || e);
+      });
   }, 250);
 }
 
-async function loadStateFromDisk() {
+async function loadStateFromRedis() {
+  if (!redis) return;
   try {
-    await ensureDataDir();
-    const raw = await fsp.readFile(STATE_FILE, "utf-8");
+    const raw = await redis.get(REDIS_KEY);
+    if (!raw) return;
+
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed.recent)) return;
 
@@ -83,10 +127,12 @@ async function loadStateFromDisk() {
     }
 
     enforceMaxBubbles();
-  } catch {
-    // ok if missing
+    console.log("[REDIS] state loaded:", recent.length, "items");
+  } catch (e) {
+    console.error("[REDIS] load failed:", e?.message || e);
   }
 }
+
 
 // =========================
 // Helpers
@@ -265,8 +311,29 @@ io.on("connection", (socket) => {
 // Boot
 // =========================
 (async () => {
-  await loadStateFromDisk();
+  await initRedis();
+  await loadStateFromRedis();
 
   const PORT = process.env.PORT || 3000;
+
+  // Best-effort flush on shutdown
+  const flushAndExit = async () => {
+    try {
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      await saveStateToRedis();
+      await writeQueue;
+      if (redis) await redis.quit();
+    } catch (e) {
+      console.error('[REDIS] flush failed:', e?.message || e);
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.on('SIGTERM', flushAndExit);
+  process.on('SIGINT', flushAndExit);
+
   server.listen(PORT, () => console.log(`Listening on ${PORT}`));
 })();
