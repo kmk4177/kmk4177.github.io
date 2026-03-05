@@ -6,7 +6,8 @@
   <title>건의사항 비눗방울</title>
   <style>
     html, body { margin:0; height:100%; background:#0b1020; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-    canvas { display:block; }
+    canvas { display:block; position: fixed; inset: 0; z-index: 0; }
+#ui, #sidebar, #centerMsg { position: fixed; z-index: 10; }
 
     #centerMsg {
       position: fixed;
