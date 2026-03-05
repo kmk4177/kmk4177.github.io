@@ -23,16 +23,20 @@ const io = new Server(server, {
 app.use(express.static(path.join(__dirname, "public")));
 
 // =========================
-// Persistence (log/state)
+// Persistence (state file)
 // =========================
+// 의견/좋아요는 파일로 저장 (v9~), host 권한은 저장하지 않음 (요청사항)
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 
 let writeQueue = Promise.resolve();
 let saveTimer = null;
 
-// 영구 HOST 기준: 최초 접속한 IP
-let hostIp = null;
+// 여러 명 host 허용: 세션(소켓) 단위로 host 부여
+const hostSocketIds = new Set();
+
+// 패스프레이즈 (원하면 환경변수로 바꿀 수 있음)
+const HOST_PHRASE = process.env.HOST_PHRASE || "I'm minkyun kang.";
 
 async function ensureDataDir() {
   await fsp.mkdir(DATA_DIR, { recursive: true });
@@ -46,26 +50,16 @@ async function safeWriteJson(filePath, obj) {
 }
 
 function scheduleSaveState() {
-  // debounce so likes don't hammer disk
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
     writeQueue = writeQueue
       .then(async () => {
         await ensureDataDir();
-        await safeWriteJson(STATE_FILE, { version: 1, savedAt: Date.now(), hostIp, recent });
+        await safeWriteJson(STATE_FILE, { version: 1, savedAt: Date.now(), recent });
       })
       .catch(() => {});
   }, 250);
-}
-
-function getClientIp(socket) {
-  const xff = socket.handshake.headers["x-forwarded-for"];
-  if (typeof xff === "string" && xff.trim()) {
-    return xff.split(",")[0].trim();
-  }
-  const addr = socket.handshake.address;
-  return typeof addr === "string" ? addr : "unknown";
 }
 
 async function loadStateFromDisk() {
@@ -73,10 +67,6 @@ async function loadStateFromDisk() {
     await ensureDataDir();
     const raw = await fsp.readFile(STATE_FILE, "utf-8");
     const parsed = JSON.parse(raw);
-
-    if (typeof parsed.hostIp === "string" && parsed.hostIp.trim()) {
-      hostIp = parsed.hostIp.trim();
-    }
 
     if (!Array.isArray(parsed.recent)) return;
 
@@ -125,7 +115,6 @@ const MAX_BALLS = 50;
 const RECENT_MAX = 400;
 
 const recent = [];
-let hostSocketId = null;
 
 function cryptoRandomId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -145,7 +134,6 @@ function enforceMaxBubbles() {
 
 function pickEvictionCandidate() {
   if (recent.length < MAX_BALLS) return null;
-  // Evict lowest likes; tie-breaker: oldest first
   let best = recent[0];
   for (const x of recent) {
     if ((x.likes ?? 0) < (best.likes ?? 0)) best = x;
@@ -159,29 +147,33 @@ function removeById(id) {
   if (idx >= 0) recent.splice(idx, 1);
 }
 
+function isHost(socket) {
+  return hostSocketIds.has(socket.id);
+}
+
 // =========================
 // Socket
 // =========================
 io.on("connection", (socket) => {
-  const ip = getClientIp(socket);
-
-  // 최초 접속 IP를 영구 HOST로 저장
-  if (!hostIp) {
-    hostIp = ip;
-    scheduleSaveState();
-  }
-
-  const isHost = hostIp === ip;
-  if (isHost) hostSocketId = socket.id;
-
-  socket.emit("host", { isHost, hostSocketId, hostIp });
+  socket.emit("host", { isHost: isHost(socket), hostCount: hostSocketIds.size });
   socket.emit("recent", recent);
+
+  // Host claim by phrase (does not create a bubble). Multiple hosts allowed.
+  socket.on("claimHost", (payload) => {
+    const phrase = String(payload?.phrase ?? "").trim();
+    if (phrase !== HOST_PHRASE) {
+      socket.emit("claimHostResult", { ok: false });
+      return;
+    }
+    hostSocketIds.add(socket.id);
+    socket.emit("claimHostResult", { ok: true });
+    io.emit("hostReassigned", { hostCount: hostSocketIds.size }); // 이름은 유지, 의미는 "host 상태 갱신"
+  });
 
   socket.on("submitText", (payload) => {
     const text = clampText(payload?.text);
     if (!text) return;
 
-    // Capacity control: evict lowest-like bubble first
     if (recent.length >= MAX_BALLS) {
       const victim = pickEvictionCandidate();
       if (victim) {
@@ -222,8 +214,9 @@ io.on("connection", (socket) => {
     scheduleSaveState();
   });
 
+  // Host-only: per-item delete/edit
   socket.on("hostDeleteItem", (payload) => {
-    if (getClientIp(socket) !== hostIp) return;
+    if (!isHost(socket)) return;
     const id = String(payload?.id || "");
     if (!id) return;
 
@@ -233,7 +226,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("hostEditItem", (payload) => {
-    if (getClientIp(socket) !== hostIp) return;
+    if (!isHost(socket)) return;
 
     const id = String(payload?.id || "");
     const text = clampText(payload?.text);
@@ -251,9 +244,9 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    if (socket.id === hostSocketId) {
-      hostSocketId = null; // hostIp는 유지
-      io.emit("hostReassigned", { hostSocketId, hostIp });
+    if (hostSocketIds.has(socket.id)) {
+      hostSocketIds.delete(socket.id);
+      io.emit("hostReassigned", { hostCount: hostSocketIds.size });
     }
   });
 });

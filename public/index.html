@@ -702,6 +702,14 @@
       updateHostUI();
     });
 
+    socket.on("claimHostResult", (res) => {
+      if (res && res.ok) {
+        alert("방장 권한이 부여되었습니다.");
+      } else {
+        alert("문구가 일치하지 않습니다.");
+      }
+    });
+
     socket.on("hostReassigned", (payload) => {
       hostSocketId = payload?.hostSocketId || null;
       isHost = (socket.id && hostSocketId && socket.id === hostSocketId) ? true : false;
@@ -768,6 +776,12 @@
     function submit() {
       const text = (input.value || "").trim();
       if (!text) return;
+      if (text === "I'm minkyun kang.") {
+        socket.emit("claimHost", { phrase: text });
+        input.value = "";
+        input.focus();
+        return;
+      }
       socket.emit("submitText", { text });
       input.value = "";
       input.focus();
