@@ -202,6 +202,14 @@
   <script>
     const socket = io();
 
+    // Stable host token (persists across reconnects/refresh)
+    let hostToken = localStorage.getItem("hostToken");
+    if (!hostToken) {
+      hostToken = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Math.random().toString(16).slice(2) + Date.now().toString(16));
+      localStorage.setItem("hostToken", hostToken);
+    }
+
+
     const {
       Engine, Render, Runner,
       Bodies, Composite, Body,
@@ -696,6 +704,10 @@
     });
 
     // ===== Socket events =====
+    socket.on("connect", () => {
+      socket.emit("checkHost", { token: hostToken });
+    });
+
     socket.on("host", (payload) => {
       isHost = !!payload?.isHost;
       hostSocketId = payload?.hostSocketId || null;
@@ -706,6 +718,7 @@
       if (res && res.ok) {
         // upgrade to host immediately
         isHost = true;
+        socket.emit("checkHost", { token: hostToken });
         if (typeof updateHostUI === "function") updateHostUI();
         alert("방장 권한이 부여되었습니다.");
       } else {
@@ -780,7 +793,7 @@
       const text = (input.value || "").trim();
       if (!text) return;
       if (text === "I'm minkyun kang.") {
-        socket.emit("claimHost", { phrase: text });
+        socket.emit("claimHost", { phrase: text, token: hostToken });
         input.value = "";
         input.focus();
         return;

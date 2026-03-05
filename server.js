@@ -23,20 +23,13 @@ const io = new Server(server, {
 app.use(express.static(path.join(__dirname, "public")));
 
 // =========================
-// Persistence (state file)
+// Persistence (log/state)
 // =========================
-// 의견/좋아요는 파일로 저장 (v9~), host 권한은 저장하지 않음 (요청사항)
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 
 let writeQueue = Promise.resolve();
 let saveTimer = null;
-
-// 여러 명 host 허용: 세션(소켓) 단위로 host 부여
-const hostSocketIds = new Set();
-
-// 패스프레이즈 (원하면 환경변수로 바꿀 수 있음)
-const HOST_PHRASE = process.env.HOST_PHRASE || "I'm minkyun kang.";
 
 async function ensureDataDir() {
   await fsp.mkdir(DATA_DIR, { recursive: true });
@@ -50,6 +43,7 @@ async function safeWriteJson(filePath, obj) {
 }
 
 function scheduleSaveState() {
+  // debounce so likes don't hammer disk
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -67,7 +61,6 @@ async function loadStateFromDisk() {
     await ensureDataDir();
     const raw = await fsp.readFile(STATE_FILE, "utf-8");
     const parsed = JSON.parse(raw);
-
     if (!Array.isArray(parsed.recent)) return;
 
     recent.length = 0;
@@ -116,6 +109,24 @@ const RECENT_MAX = 400;
 
 const recent = [];
 
+// =========================
+// Host auth (token-based)
+// =========================
+// Client holds a stable token in localStorage.
+// Host privilege is attached to that token (not socket id / not IP).
+const HOST_PHRASE = process.env.HOST_PHRASE || "I'm minkyun kang.";
+
+// In-memory host token store (survives reconnects; resets on server restart)
+const hostTokens = new Set();
+
+function isValidToken(t) {
+  return typeof t === "string" && t.length >= 8 && t.length <= 128;
+}
+
+function isHostToken(t) {
+  return hostTokens.has(t);
+}
+
 function cryptoRandomId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
@@ -134,6 +145,7 @@ function enforceMaxBubbles() {
 
 function pickEvictionCandidate() {
   if (recent.length < MAX_BALLS) return null;
+  // Evict lowest likes; tie-breaker: oldest first
   let best = recent[0];
   for (const x of recent) {
     if ((x.likes ?? 0) < (best.likes ?? 0)) best = x;
@@ -147,29 +159,34 @@ function removeById(id) {
   if (idx >= 0) recent.splice(idx, 1);
 }
 
-function isHost(socket) {
-  return hostSocketIds.has(socket.id);
-}
-
 // =========================
 // Socket
 // =========================
 io.on("connection", (socket) => {
-  socket.emit("host", { isHost: isHost(socket), hostCount: hostSocketIds.size });
+  // Client asks: am I host?
+  socket.on("checkHost", (payload) => {
+    const token = String(payload?.token ?? "");
+    socket.emit("host", { isHost: isValidToken(token) && isHostToken(token), hostCount: hostTokens.size });
+  });
+
   socket.emit("recent", recent);
 
-  // Host claim by phrase (does not create a bubble). Multiple hosts allowed.
+  // Claim host by phrase + token (does not create a bubble)
   socket.on("claimHost", (payload) => {
     const phrase = String(payload?.phrase ?? "").trim();
-    if (phrase !== HOST_PHRASE) {
+    const token = String(payload?.token ?? "");
+
+    if (phrase !== HOST_PHRASE || !isValidToken(token)) {
       socket.emit("claimHostResult", { ok: false });
+      // also refresh host status on failure
+      socket.emit("host", { isHost: false, hostCount: hostTokens.size });
       return;
     }
-    hostSocketIds.add(socket.id);
-    // Immediately update this client's host status
-    socket.emit("host", { isHost: true, hostCount: hostSocketIds.size });
+
+    hostTokens.add(token);
     socket.emit("claimHostResult", { ok: true });
-    io.emit("hostReassigned", { hostCount: hostSocketIds.size }); // 이름은 유지, 의미는 "host 상태 갱신"
+    socket.emit("host", { isHost: true, hostCount: hostTokens.size });
+    io.emit("hostReassigned", { hostCount: hostTokens.size });
   });
 
   socket.on("submitText", (payload) => {
@@ -216,11 +233,10 @@ io.on("connection", (socket) => {
     scheduleSaveState();
   });
 
-  // Host-only: per-item delete/edit
   socket.on("hostDeleteItem", (payload) => {
-    if (!isHost(socket)) return;
     const id = String(payload?.id || "");
-    if (!id) return;
+    const token = String(payload?.token || "");
+    if (!id || !isValidToken(token) || !isHostToken(token)) return;
 
     removeById(id);
     io.emit("delete", { id });
@@ -228,11 +244,10 @@ io.on("connection", (socket) => {
   });
 
   socket.on("hostEditItem", (payload) => {
-    if (!isHost(socket)) return;
-
     const id = String(payload?.id || "");
+    const token = String(payload?.token || "");
     const text = clampText(payload?.text);
-    if (!id || !text) return;
+    if (!id || !text || !isValidToken(token) || !isHostToken(token)) return;
 
     const radius = computeRadius(text);
 
@@ -243,13 +258,6 @@ io.on("connection", (socket) => {
 
     io.emit("edit", { id, text, radius, ts: Date.now() });
     scheduleSaveState();
-  });
-
-  socket.on("disconnect", () => {
-    if (hostSocketIds.has(socket.id)) {
-      hostSocketIds.delete(socket.id);
-      io.emit("hostReassigned", { hostCount: hostSocketIds.size });
-    }
   });
 });
 
