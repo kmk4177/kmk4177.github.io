@@ -31,6 +31,9 @@ const STATE_FILE = path.join(DATA_DIR, "state.json");
 let writeQueue = Promise.resolve();
 let saveTimer = null;
 
+// 영구 HOST 기준: 최초 접속한 IP
+let hostIp = null;
+
 async function ensureDataDir() {
   await fsp.mkdir(DATA_DIR, { recursive: true });
 }
@@ -50,10 +53,19 @@ function scheduleSaveState() {
     writeQueue = writeQueue
       .then(async () => {
         await ensureDataDir();
-        await safeWriteJson(STATE_FILE, { version: 1, savedAt: Date.now(), recent });
+        await safeWriteJson(STATE_FILE, { version: 1, savedAt: Date.now(), hostIp, recent });
       })
       .catch(() => {});
   }, 250);
+}
+
+function getClientIp(socket) {
+  const xff = socket.handshake.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.trim()) {
+    return xff.split(",")[0].trim();
+  }
+  const addr = socket.handshake.address;
+  return typeof addr === "string" ? addr : "unknown";
 }
 
 async function loadStateFromDisk() {
@@ -61,6 +73,11 @@ async function loadStateFromDisk() {
     await ensureDataDir();
     const raw = await fsp.readFile(STATE_FILE, "utf-8");
     const parsed = JSON.parse(raw);
+
+    if (typeof parsed.hostIp === "string" && parsed.hostIp.trim()) {
+      hostIp = parsed.hostIp.trim();
+    }
+
     if (!Array.isArray(parsed.recent)) return;
 
     recent.length = 0;
@@ -104,8 +121,8 @@ function computeRadius(text) {
   return Math.max(68, Math.min(220, baseR + extra));
 }
 
-const MAX_BALLS = 20;
-const RECENT_MAX = 200;
+const MAX_BALLS = 50;
+const RECENT_MAX = 400;
 
 const recent = [];
 let hostSocketId = null;
@@ -146,9 +163,18 @@ function removeById(id) {
 // Socket
 // =========================
 io.on("connection", (socket) => {
-  if (!hostSocketId) hostSocketId = socket.id;
+  const ip = getClientIp(socket);
 
-  socket.emit("host", { isHost: socket.id === hostSocketId, hostSocketId });
+  // 최초 접속 IP를 영구 HOST로 저장
+  if (!hostIp) {
+    hostIp = ip;
+    scheduleSaveState();
+  }
+
+  const isHost = hostIp === ip;
+  if (isHost) hostSocketId = socket.id;
+
+  socket.emit("host", { isHost, hostSocketId, hostIp });
   socket.emit("recent", recent);
 
   socket.on("submitText", (payload) => {
@@ -197,7 +223,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("hostDeleteItem", (payload) => {
-    if (socket.id !== hostSocketId) return;
+    if (getClientIp(socket) !== hostIp) return;
     const id = String(payload?.id || "");
     if (!id) return;
 
@@ -207,7 +233,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("hostEditItem", (payload) => {
-    if (socket.id !== hostSocketId) return;
+    if (getClientIp(socket) !== hostIp) return;
 
     const id = String(payload?.id || "");
     const text = clampText(payload?.text);
@@ -226,9 +252,8 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     if (socket.id === hostSocketId) {
-      const ids = Array.from(io.sockets.sockets.keys());
-      hostSocketId = ids.length ? ids[0] : null;
-      io.emit("hostReassigned", { hostSocketId });
+      hostSocketId = null; // hostIp는 유지
+      io.emit("hostReassigned", { hostSocketId, hostIp });
     }
   });
 });
