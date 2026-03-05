@@ -166,6 +166,8 @@ io.on("connection", (socket) => {
       return;
     }
     hostSocketIds.add(socket.id);
+    // Immediately update this client's host status
+    socket.emit("host", { isHost: true, hostCount: hostSocketIds.size });
     socket.emit("claimHostResult", { ok: true });
     io.emit("hostReassigned", { hostCount: hostSocketIds.size }); // 이름은 유지, 의미는 "host 상태 갱신"
   });

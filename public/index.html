@@ -704,6 +704,9 @@
 
     socket.on("claimHostResult", (res) => {
       if (res && res.ok) {
+        // upgrade to host immediately
+        isHost = true;
+        if (typeof updateHostUI === "function") updateHostUI();
         alert("방장 권한이 부여되었습니다.");
       } else {
         alert("문구가 일치하지 않습니다.");

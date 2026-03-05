@@ -1,6 +1,6 @@
 {
   "name": "realtime-balls",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
