@@ -187,11 +187,7 @@
       <span>건의사항 리스트</span>
       <span id="countBadge">0</span>
     </div>
-    <div id="hostControls">
-      <button id="clearLogBtn" class="miniBtn danger">리스트 전체 삭제</button>
-      <span style="font-size:12px; color: rgba(255,255,255,0.6); font-weight:800;">HOST 전용</span>
-    </div>
-    <div id="log"></div>
+<div id="log"></div>
   </div>
 
   <div id="ui">
@@ -264,8 +260,6 @@
     let isHost = false;
     let hostSocketId = null;
 
-    const hostControlsEl = document.getElementById("hostControls");
-    const clearLogBtn = document.getElementById("clearLogBtn");
 
     // ===== Sidebar log =====
     const logEl = document.getElementById("log");
@@ -364,14 +358,9 @@
     }
 
     function updateHostUI() {
-      hostControlsEl.style.display = isHost ? "flex" : "none";
-      // actions visibility handled by renderListSorted
+      // host 여부에 따라 각 항목의 수정/삭제 버튼 노출 (renderListSorted에서 처리)
       renderListSorted();
     }
-
-    clearLogBtn.addEventListener("click", () => {
-      if (!isHost) return;
-      socket.emit("hostClearLog");
     });
 
     // ===== Balls =====
