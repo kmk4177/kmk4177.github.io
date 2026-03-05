@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>멀티유저 비눗방울</title>
+  <style>
+    html, body { margin:0; height:100%; background:#0b1020; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    canvas { display:block; }
+
+    #ui {
+      position: fixed; left: 16px; right: 340px; bottom: 16px;
+      display: flex; gap: 10px; align-items: center;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 12px;
+    }
+    #text {
+      flex: 1;
+      height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.10);
+      color: white;
+      padding: 0 14px;
+      outline: none;
+      font-size: 15px;
+    }
+    #btn {
+      height: 44px;
+      padding: 0 16px;
+      border-radius: 12px;
+      border: 0;
+      background: #4f8cff;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    #hint {
+      position: fixed;
+      left: 16px; top: 14px;
+      color: rgba(255,255,255,0.72);
+      font-size: 13px;
+      user-select: none;
+    }
+
+    /* Right sidebar log */
+    #sidebar {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      bottom: 12px;
+      width: 300px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(10px);
+      color: rgba(255,255,255,0.9);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #sidebarHeader {
+      padding: 14px 14px 10px;
+      font-weight: 800;
+      font-size: 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.10);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    #countBadge {
+      font-weight: 700;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    #log {
+      padding: 8px 10px 10px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .logItem {
+      font-size: 12px;
+      line-height: 1.35;
+      padding: 10px 10px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.10);
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .logMeta {
+      display: block;
+      margin-top: 6px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.55);
+    }
+
+    @media (max-width: 820px) {
+      #sidebar { display: none; }
+      #ui { right: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="hint">문자 입력 → Enter. 공을 클릭하면 터집니다. (최대 20개 유지)</div>
+
+  <div id="sidebar">
+    <div id="sidebarHeader">
+      <span>입력 로그</span>
+      <span id="countBadge">0</span>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <div id="ui">
+    <input id="text" type="text" placeholder="원 안에 들어갈 문자열 (최대 80자)" maxlength="80" />
+    <button id="btn">보내기</button>
+  </div>
+
+  <!-- Socket.IO (서버가 자동 제공) -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <!-- Matter.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
+
+  <script>
+    const socket = io();
+
+    const {
+      Engine, Render, Runner,
+      Bodies, Composite, Body,
+      Events, Mouse, MouseConstraint, Query
+    } = Matter;
+
+    // ===== Physics engine =====
+    const engine = Engine.create();
+    engine.gravity.y = 0; // 비눗방울처럼 중력 제거
+
+    const render = Render.create({
+      element: document.body,
+      engine,
+      options: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        wireframes: false,
+        background: "#0b1020",
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 2)
+      }
+    });
+
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
+
+    // ===== Walls =====
+    let walls = [];
+    function rebuildWalls() {
+      walls.forEach(w => Composite.remove(engine.world, w));
+      walls = [];
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const t = 80;
+
+      const common = { isStatic: true, render: { fillStyle: "rgba(255,255,255,0)" } };
+      const floor = Bodies.rectangle(w/2, h + t/2, w + 2*t, t, common);
+      const ceil  = Bodies.rectangle(w/2, -t/2,    w + 2*t, t, common);
+      const left  = Bodies.rectangle(-t/2, h/2,    t, h + 2*t, common);
+      const right = Bodies.rectangle(w + t/2, h/2, t, h + 2*t, common);
+
+      walls.push(floor, ceil, left, right);
+      Composite.add(engine.world, walls);
+    }
+    rebuildWalls();
+
+    // ===== Mouse drag (optional) =====
+    const mouse = Mouse.create(render.canvas);
+    const mouseConstraint = MouseConstraint.create(engine, {
+      mouse,
+      constraint: { stiffness: 0.2, render: { visible: false } }
+    });
+    Composite.add(engine.world, mouseConstraint);
+    render.mouse = mouse;
+
+    // ===== Sidebar log =====
+    const logEl = document.getElementById("log");
+    const countBadge = document.getElementById("countBadge");
+    const logItems = []; // {text, ts}
+
+    function fmtTime(ts) {
+      const d = new Date(ts);
+      const hh = String(d.getHours()).padStart(2,"0");
+      const mm = String(d.getMinutes()).padStart(2,"0");
+      const ss = String(d.getSeconds()).padStart(2,"0");
+      return `${hh}:${mm}:${ss}`;
+    }
+
+    function pushLog(text, ts) {
+      logItems.push({ text, ts });
+      // 너무 길면 자르기
+      if (logItems.length > 200) logItems.shift();
+
+      const item = document.createElement("div");
+      item.className = "logItem";
+      item.textContent = text;
+
+      const meta = document.createElement("span");
+      meta.className = "logMeta";
+      meta.textContent = fmtTime(ts);
+
+      item.appendChild(meta);
+      logEl.appendChild(item);
+      logEl.scrollTop = logEl.scrollHeight;
+
+      countBadge.textContent = String(logItems.length);
+    }
+
+    // ===== Balls =====
+    const balls = new Map(); // id -> body
+    const particles = new Set();
+
+    const MAX_BALLS = 20;
+    const FADE_MS = 900;
+
+    function randomBallColor() {
+      const hues = [200, 220, 240, 260, 280, 300, 160, 180];
+      const h = hues[Math.floor(Math.random() * hues.length)];
+      return `hsl(${h} 85% 62% / 0.92)`;
+    }
+
+    function parseHSLAAlpha(fillStyle, alpha) {
+      // Expect fillStyle like: hsl(H S% L% / A)
+      // fallback to rgba white
+      const m = String(fillStyle).match(/hsl\((.+?)\s+(.+?)\s+(.+?)\s*\/\s*([0-9.]+)\s*\)/i);
+      if (!m) return `rgba(255,255,255,${alpha})`;
+      return `hsl(${m[1]} ${m[2]} ${m[3]} / ${alpha})`;
+    }
+
+    function startFadeOut(ball) {
+      if (ball._fading) return;
+      ball._fading = true;
+      ball._fadeStart = Date.now();
+      ball._fadeDur = FADE_MS;
+
+      // make it less bouncy while fading
+      ball.restitution = 0.3;
+      ball.frictionAir = 0.08;
+    }
+
+    function maybeEvictOneBall() {
+      if (balls.size < MAX_BALLS) return;
+
+      const arr = Array.from(balls.values()).filter(b => !b._fading);
+      if (!arr.length) return;
+
+      const victim = arr[Math.floor(Math.random() * arr.length)];
+      startFadeOut(victim);
+    }
+
+    function spawnBall(spawn) {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      if (balls.has(spawn.id)) return;
+
+      // 새 공을 만들기 전에, 최대 개수 관리(랜덤 페이드 아웃)
+      maybeEvictOneBall();
+
+      const x = spawn.nx * w;
+      const y = spawn.ny * h;
+      const r = Math.max(28, Math.min(120, spawn.radius ?? 48));
+
+      const baseFill = randomBallColor();
+      const ball = Bodies.circle(x, y, r, {
+        restitution: 0.95,
+        friction: 0.01,
+        frictionAir: 0.02,
+        density: 0.0012,
+        render: {
+          fillStyle: baseFill,
+          strokeStyle: "rgba(255,255,255,0.30)",
+          lineWidth: 2
+        }
+      });
+
+      ball._spawnId = spawn.id;
+      ball._labelText = spawn.text;
+      ball._baseFill = baseFill;
+
+      Composite.add(engine.world, ball);
+      balls.set(spawn.id, ball);
+
+      // gentle drift
+      Body.setVelocity(ball, { x: spawn.nvx ?? 0, y: spawn.nvy ?? 0 });
+      Body.setAngularVelocity(ball, (Math.random() * 2 - 1) * 0.02);
+    }
+
+    // ===== Text fit =====
+    function wrapTextGreedy(text, maxWidthPx, ctx) {
+      const hasSpace = /\s/.test(text);
+      if (!hasSpace) {
+        // no spaces: split into 2 lines if needed
+        const mid = Math.ceil(text.length / 2);
+        return [text.slice(0, mid), text.slice(mid)].filter(Boolean);
+      }
+
+      const words = text.split(/\s+/).filter(Boolean);
+      const lines = [];
+      let line = "";
+      for (const w of words) {
+        const test = line ? (line + " " + w) : w;
+        if (ctx.measureText(test).width <= maxWidthPx) {
+          line = test;
+        } else {
+          if (line) lines.push(line);
+          line = w;
+          // too-long word: hard split
+          if (ctx.measureText(line).width > maxWidthPx) {
+            let chunk = "";
+            for (const ch of line) {
+              const t = chunk + ch;
+              if (ctx.measureText(t).width <= maxWidthPx) chunk = t;
+              else {
+                if (chunk) lines.push(chunk);
+                chunk = ch;
+              }
+            }
+            line = chunk;
+          }
+        }
+        if (lines.length >= 3) break;
+      }
+      if (lines.length < 3 && line) lines.push(line);
+      return lines.slice(0, 3);
+    }
+
+    function fitTextInCircle(text, r, ctx) {
+      const padding = r * 0.22;
+      const maxWidth = (2 * r) - (2 * padding);
+      const maxHeight = (2 * r) - (2 * padding);
+
+      let fontSize = Math.min(26, Math.max(10, Math.floor(r * 0.36)));
+      const minFont = 10;
+
+      for (; fontSize >= minFont; fontSize--) {
+        ctx.font = `800 ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+        const lines = wrapTextGreedy(text, maxWidth, ctx);
+
+        const widthOk = lines.every(line => ctx.measureText(line).width <= maxWidth);
+        const lineHeight = fontSize * 1.10;
+        const totalHeight = lines.length * lineHeight;
+
+        if (widthOk && totalHeight <= maxHeight) return { fontSize, lines, lineHeight };
+      }
+
+      ctx.font = `800 ${minFont}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+      const lines = wrapTextGreedy(text, maxWidth, ctx);
+      return { fontSize: minFont, lines, lineHeight: minFont * 1.10 };
+    }
+
+    // ===== Pop effect (click) =====
+    function popBall(ball) {
+      const pos = { x: ball.position.x, y: ball.position.y };
+      const r = ball.circleRadius || 40;
+
+      Composite.remove(engine.world, ball);
+      if (ball._spawnId && balls.has(ball._spawnId)) balls.delete(ball._spawnId);
+
+      const pieces = 10;
+      for (let i = 0; i < pieces; i++) {
+        const pr = Math.max(4, Math.floor(r * 0.14));
+        const p = Bodies.circle(pos.x, pos.y, pr, {
+          restitution: 0.96,
+          friction: 0.01,
+          frictionAir: 0.03,
+          density: 0.0010,
+          render: {
+            fillStyle: "rgba(255,255,255,0.85)",
+            strokeStyle: "rgba(255,255,255,0.35)",
+            lineWidth: 1
+          }
+        });
+
+        const angle = (Math.PI * 2) * (i / pieces) + (Math.random() * 0.4);
+        const speed = 3 + Math.random() * 4;
+        Body.setVelocity(p, { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed });
+        Body.setAngularVelocity(p, (Math.random() * 2 - 1) * 0.18);
+
+        p._dieAt = Date.now() + 700;
+        particles.add(p);
+        Composite.add(engine.world, p);
+      }
+    }
+
+    render.canvas.addEventListener("mouseup", (e) => {
+      const rect = render.canvas.getBoundingClientRect();
+      const px = (e.clientX - rect.left);
+      const py = (e.clientY - rect.top);
+
+      const bodies = Array.from(balls.values());
+      const found = Query.point(bodies, { x: px, y: py });
+      if (found && found.length) popBall(found[0]);
+    });
+
+    // ===== Engine update hooks =====
+    Events.on(engine, "beforeUpdate", () => {
+      const now = Date.now();
+
+      // fade-out + remove
+      for (const body of balls.values()) {
+        if (!body._fading) continue;
+        const t = Math.min(1, (now - body._fadeStart) / body._fadeDur);
+        const alpha = Math.max(0, 1 - t);
+
+        body.render.fillStyle = parseHSLAAlpha(body._baseFill, alpha * 0.92);
+        body.render.strokeStyle = `rgba(255,255,255,${0.30 * alpha})`;
+
+        if (t >= 1) {
+          Composite.remove(engine.world, body);
+          if (body._spawnId && balls.has(body._spawnId)) balls.delete(body._spawnId);
+        }
+      }
+
+      // particles cleanup
+      for (const p of particles) {
+        if (p._dieAt && now >= p._dieAt) {
+          Composite.remove(engine.world, p);
+          particles.delete(p);
+        }
+      }
+
+      // bubble-like drifting forces (very subtle)
+      // Apply small random forces + slight "spring" toward center so they don't stick on edges
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+
+      for (const b of balls.values()) {
+        const jitter = 0.00002;
+        const fx = (Math.random() * 2 - 1) * jitter;
+        const fy = (Math.random() * 2 - 1) * jitter;
+
+        // weak center attraction
+        const dx = (cx - b.position.x);
+        const dy = (cy - b.position.y);
+        const attract = 0.0000008;
+        const ax = dx * attract;
+        const ay = dy * attract;
+
+        Body.applyForce(b, b.position, { x: fx + ax, y: fy + ay });
+
+        // cap speed gently
+        const v = b.velocity;
+        const vmax = 4.0;
+        const sp = Math.hypot(v.x, v.y);
+        if (sp > vmax) {
+          Body.setVelocity(b, { x: (v.x / sp) * vmax, y: (v.y / sp) * vmax });
+        }
+      }
+    });
+
+    // Text render
+    Events.on(render, "afterRender", () => {
+      const ctx = render.context;
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (const body of balls.values()) {
+        const p = body.position;
+        const r = body.circleRadius || 40;
+        const text = body._labelText || "";
+
+        const fitted = fitTextInCircle(text, r, ctx);
+        const fontSize = fitted.fontSize;
+        const lines = fitted.lines;
+        const lh = fitted.lineHeight;
+
+        ctx.font = `800 ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+        ctx.fillStyle = "rgba(10, 14, 28, 0.92)";
+
+        if (lines.length === 1) {
+          ctx.fillText(lines[0], p.x, p.y);
+        } else {
+          const startY = p.y - (lh * (lines.length - 1)) / 2;
+          for (let i = 0; i < lines.length; i++) {
+            ctx.fillText(lines[i], p.x, startY + i * lh);
+          }
+        }
+      }
+
+      ctx.restore();
+    });
+
+    // ===== Socket events =====
+    socket.on("spawn", (spawn) => {
+      spawnBall(spawn);
+      pushLog(spawn.text, spawn.ts || Date.now());
+    });
+
+    socket.on("recent", (arr) => {
+      (arr || []).forEach(spawn => {
+        spawnBall(spawn);
+        pushLog(spawn.text, spawn.ts || Date.now());
+      });
+    });
+
+    // ===== Input =====
+    const input = document.getElementById("text");
+    const btn = document.getElementById("btn");
+
+    function submit() {
+      const text = (input.value || "").trim();
+      if (!text) return;
+      socket.emit("submitText", { text });
+      input.value = "";
+      input.focus();
+    }
+    btn.addEventListener("click", submit);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+
+    // ===== Resize =====
+    window.addEventListener("resize", () => {
+      render.canvas.width = window.innerWidth;
+      render.canvas.height = window.innerHeight;
+      render.options.width = window.innerWidth;
+      render.options.height = window.innerHeight;
+      rebuildWalls();
+    });
+  </script>
+</body>
+</html>
