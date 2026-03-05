@@ -354,13 +354,13 @@
           if (next === null) return;
           const t = String(next).trim();
           if (!t) return;
-          socket.emit("hostEditItem", { id: item.id, text: t });
+          socket.emit("hostEditItem", { id: item.id, text: t, token: hostToken, token: hostToken });
         });
 
         delBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           if (!isHost) return;
-          socket.emit("hostDeleteItem", { id: item.id });
+          socket.emit("hostDeleteItem", { id: item.id, token: hostToken, token: hostToken });
         });
 
         actions.appendChild(editBtn);
