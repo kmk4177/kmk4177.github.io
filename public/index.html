@@ -6,8 +6,8 @@
   <title>건의사항 비눗방울</title>
   <style>
     html, body { margin:0; height:100%; background:#0b1020; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-    canvas { display:block; position: fixed; inset: 0; z-index: 0; }
-#ui, #sidebar, #centerMsg { position: fixed; z-index: 10; }
+    canvas { display:block; position: fixed; inset: 0; z-index: 0; pointer-events: auto; }
+#ui, #sidebar, #centerMsg { position: fixed; z-index: 1000; pointer-events: auto; }
 
     #centerMsg {
       position: fixed;
@@ -227,6 +227,15 @@
     Render.run(render);
     const runner = Runner.create();
     Runner.run(runner, engine);
+
+    // Hard-enforce layering so UI always receives clicks
+    render.canvas.style.position = "fixed";
+    render.canvas.style.inset = "0";
+    render.canvas.style.zIndex = "0";
+    render.canvas.style.pointerEvents = "auto";
+    document.getElementById("ui").style.zIndex = "1000";
+    document.getElementById("sidebar").style.zIndex = "1000";
+    document.getElementById("centerMsg").style.zIndex = "1000";
 
     // ===== Walls =====
     let walls = [];
@@ -505,6 +514,22 @@
 
     // ===== Click to Like =====
     render.canvas.addEventListener("mouseup", (e) => {
+      // If user clicked on UI (input/sidebar), ignore like-click handling.
+      const ui = document.getElementById("ui");
+      const sidebar = document.getElementById("sidebar");
+      const centerMsg = document.getElementById("centerMsg");
+
+      const cx = e.clientX;
+      const cy = e.clientY;
+
+      const inside = (el) => {
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+      };
+
+      if (inside(ui) || inside(sidebar) || inside(centerMsg)) return;
+
       const rect = render.canvas.getBoundingClientRect();
       const px = (e.clientX - rect.left);
       const py = (e.clientY - rect.top);
